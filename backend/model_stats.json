@@ -1,0 +1,82 @@
+{
+  "best_model": "LinearRegression",
+  "model_metrics": {
+    "mae": 1.611121346312302,
+    "mse": 4.082628398521847,
+    "rmse": 2.020551508505004,
+    "r2": 0.9889832909573145
+  },
+  "all_models": {
+    "RandomForest": {
+      "mae": 1.730810880188007,
+      "mse": 4.718855027065917,
+      "rmse": 2.172292574002387,
+      "r2": 0.9872664744930935
+    },
+    "GradientBoosting": {
+      "mae": 1.657845356168391,
+      "mse": 4.364635848301432,
+      "rmse": 2.089171091198955,
+      "r2": 0.9882223120685143
+    },
+    "LinearRegression": {
+      "mae": 1.611121346312302,
+      "mse": 4.082628398521847,
+      "rmse": 2.020551508505004,
+      "r2": 0.9889832909573145
+    }
+  },
+  "feature_importance": {
+    "Hours Studied": 0.2,
+    "Previous Scores": 0.2,
+    "Extracurricular Activities": 0.2,
+    "Sleep Hours": 0.2,
+    "Sample Question Papers Practiced": 0.2
+  },
+  "dataset_stats": {
+    "total_samples": 10000,
+    "feature_stats": {
+      "Hours Studied": {
+        "type": "numeric",
+        "mean": 4.9929,
+        "std": 2.5893087961856156,
+        "min": 1.0,
+        "max": 9.0
+      },
+      "Previous Scores": {
+        "type": "numeric",
+        "mean": 69.4457,
+        "std": 17.34315225104711,
+        "min": 40.0,
+        "max": 99.0
+      },
+      "Sleep Hours": {
+        "type": "numeric",
+        "mean": 6.5306,
+        "std": 1.6958629765177118,
+        "min": 4.0,
+        "max": 9.0
+      },
+      "Sample Question Papers Practiced": {
+        "type": "numeric",
+        "mean": 4.5833,
+        "std": 2.867347777708144,
+        "min": 0.0,
+        "max": 9.0
+      }
+    },
+    "target_stats": {
+      "mean": 55.2248,
+      "std": 19.212557799463344,
+      "min": 10.0,
+      "max": 100.0,
+      "median": 55.0
+    },
+    "performance_distribution": {
+      "Excellent (80-100)": 1179,
+      "Good (60-79)": 3111,
+      "Average (40-59)": 3328,
+      "Poor (0-39)": 2382
+    }
+  }
+}
