@@ -29,6 +29,10 @@ next-env.d.ts
 /build
 dist/
 dist
+# Environment files
+.env
+backend/.env
+frontend/.env
 
 # Environment files (comprehensive coverage)
 
@@ -81,3 +85,7 @@ android-sdk/ frontend/node_modules/.cache/default-development/2.pack
 frontend/node_modules/.cache/default-development/2.pack
 frontend/node_modules/.cache/default-development/0.pack
 frontend/node_modules/.cache/default-development/1.pack
+# Environment files
+.env
+backend/.env
+frontend/.env

@@ -1,3 +1,4 @@
+import AIChatbot from "../components/AIChatbot.jsx/AIChatbot";
 import { Link } from 'react-router-dom';
 import { ArrowRight, Calculator, Upload, BarChart3, TrendingUp, Brain, Clock } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -199,6 +200,10 @@ const Home = () => {
           </Link>
         </div>
       </section>
+
+      {/* ================= AI CHATBOT ADDED HERE ================= */}
+      <AIChatbot />
+
     </div>
   );
 };

@@ -1,39 +1,61 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from pydantic import BaseModel, Field
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 import io
-from ml_model import predict_performance, get_model_stats, train_model
 
+from ml_model import predict_performance, train_model, get_model_stats
+
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from groq import Groq
+
+# ==========================
+# ENV SETUP
+# ==========================
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+MONGO_URL = os.getenv("MONGO_URL")
+DB_NAME = os.getenv("DB_NAME")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Create the main app without a prefix
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
+
+client_ai = Groq(api_key=GROQ_API_KEY)
+
 app = FastAPI()
-
-# Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Models
+# ==========================
+# AUTH CONFIG
+# ==========================
+SECRET_KEY = os.getenv("JWT_SECRET", "supersecretkey")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+security = HTTPBearer()
+
+# ==========================
+# MODELS
+# ==========================
 class PredictionInput(BaseModel):
-    hours_studied: float = Field(..., ge=0, le=24)
+    hours_studied: float = Field(..., ge=1, le=9)
     previous_scores: float = Field(..., ge=0, le=100)
     extracurricular_activities: str
     sleep_hours: float = Field(..., ge=0, le=24)
     sample_question_papers_practiced: int = Field(..., ge=0)
+
 
 class PredictionOutput(BaseModel):
     predicted_score: float
@@ -41,159 +63,303 @@ class PredictionOutput(BaseModel):
     color: str
     input_data: dict
 
-class BatchPredictionResult(BaseModel):
-    predictions: List[dict]
-    summary: dict
 
-# Train model on startup
+class AIChatRequest(BaseModel):
+    message: str
+    context: dict | None = None
+
+
+class UserRegister(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str = "student"
+
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: dict
+
+
+# ==========================
+# AUTH FUNCTIONS
+# ==========================
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+
+def verify_password(password: str, hashed: str):
+    return pwd_context.verify(password, hashed)
+
+
+def create_access_token(data: dict):
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    data.update({"exp": expire})
+    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# ==========================
+# AUTH CHECK
+# ==========================
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def require_role(roles: list):
+    async def checker(user: dict = Depends(get_current_user)):
+        if user.get("role") not in roles:
+            raise HTTPException(status_code=403, detail="Access denied")
+        return user
+    return checker
+
+
+# ==========================
+# TRAIN MODEL
+# ==========================
 try:
-    print("Initializing ML model...")
     train_model()
-    print("Model ready!")
+    print("ML Model Ready")
 except Exception as e:
-    print(f"Error training model: {e}")
+    print("Model error:", e)
 
-# Routes
+
+# ==========================
+# ROOT
+# ==========================
 @api_router.get("/")
 async def root():
-    return {"message": "Student Performance Predictor API", "status": "active"}
+    return {"message": "Student Performance Predictor API running"}
 
-@api_router.post("/predict", response_model=PredictionOutput)
-async def predict(input_data: PredictionInput):
-    """Predict performance for a single student"""
-    try:
-        result = predict_performance(
-            hours_studied=input_data.hours_studied,
-            previous_scores=input_data.previous_scores,
-            extracurricular=input_data.extracurricular_activities,
-            sleep_hours=input_data.sleep_hours,
-            sample_papers=input_data.sample_question_papers_practiced
-        )
-        
-        # Save prediction to database
-        prediction_doc = {
-            'id': str(uuid.uuid4()),
-            'input': input_data.model_dump(),
-            'output': result,
-            'timestamp': datetime.now(timezone.utc).isoformat()
+
+# ==========================
+# REGISTER
+# ==========================
+@api_router.post("/auth/register")
+async def register_user(user: UserRegister):
+
+    existing = await db.users.find_one({"email": user.email})
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already exists")
+
+    user_doc = {
+        "id": str(uuid.uuid4()),
+        "name": user.name,
+        "email": user.email,
+        "password": hash_password(user.password),
+        "role": user.role,
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    await db.users.insert_one(user_doc)
+
+    return {"message": "User registered"}
+
+
+# ==========================
+# LOGIN
+# ==========================
+@api_router.post("/auth/login", response_model=TokenResponse)
+async def login(user: UserLogin):
+
+    db_user = await db.users.find_one({"email": user.email})
+
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(user.password, db_user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = create_access_token({
+        "user_id": db_user["id"],
+        "email": db_user["email"],
+        "role": db_user["role"]
+    })
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": db_user["id"],
+            "name": db_user["name"],
+            "email": db_user["email"],
+            "role": db_user["role"]
         }
-        await db.predictions.insert_one(prediction_doc)
-        
-        return PredictionOutput(
-            predicted_score=result['predicted_score'],
-            category=result['category'],
-            color=result['color'],
-            input_data=input_data.model_dump()
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+    }
 
-@api_router.post("/predict-batch", response_model=BatchPredictionResult)
-async def predict_batch(file: UploadFile = File(...)):
-    """Predict performance for multiple students from CSV"""
+
+# ==========================
+# SINGLE PREDICTION
+# ==========================
+@api_router.post("/predict", response_model=PredictionOutput)
+async def predict(
+    data: PredictionInput,
+    user: dict = Depends(require_role(["student", "admin"]))
+):
+
+    result = predict_performance(
+        hours_studied=data.hours_studied,
+        previous_scores=data.previous_scores,
+        extracurricular=data.extracurricular_activities,
+        sleep_hours=data.sleep_hours,
+        sample_papers=data.sample_question_papers_practiced
+    )
+
+    return PredictionOutput(
+        predicted_score=result["predicted_score"],
+        category=result["category"],
+        color=result["color"],
+        input_data=data.model_dump()
+    )
+
+
+# ==========================
+# BATCH PREDICTION
+# ==========================
+@api_router.post("/predict-batch")
+async def predict_batch(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_role(["student", "admin"]))
+):
+
     try:
-        # Read CSV file
+
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
-        
-        # Validate columns
-        required_cols = ['Hours Studied', 'Previous Scores', 'Extracurricular Activities', 
-                        'Sleep Hours', 'Sample Question Papers Practiced']
-        
-        if not all(col in df.columns for col in required_cols):
-            raise HTTPException(status_code=400, detail=f"CSV must contain columns: {required_cols}")
-        
-        # Make predictions
-        predictions = []
-        for _, row in df.iterrows():
-            result = predict_performance(
-                hours_studied=row['Hours Studied'],
-                previous_scores=row['Previous Scores'],
-                extracurricular=row['Extracurricular Activities'],
-                sleep_hours=row['Sleep Hours'],
-                sample_papers=row['Sample Question Papers Practiced']
+
+        if "Previous Scores" not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail="CSV must contain 'Previous Scores' column"
             )
-            
+
+        predictions = []
+
+        category_distribution = {
+            "Excellent": 0,
+            "Good": 0,
+            "Average": 0,
+            "Poor": 0
+        }
+
+        for _, row in df.iterrows():
+
+            result = predict_performance(
+                hours_studied=5,
+                previous_scores=float(row["Previous Scores"]),
+                extracurricular="No",
+                sleep_hours=7,
+                sample_papers=0
+            )
+
+            category = result["category"]
+
             predictions.append({
-                'input': {
-                    'hours_studied': float(row['Hours Studied']),
-                    'previous_scores': float(row['Previous Scores']),
-                    'extracurricular_activities': row['Extracurricular Activities'],
-                    'sleep_hours': float(row['Sleep Hours']),
-                    'sample_question_papers_practiced': int(row['Sample Question Papers Practiced'])
-                },
-                'predicted_score': result['predicted_score'],
-                'category': result['category'],
-                'color': result['color']
+                "previous_score": row["Previous Scores"],
+                "predicted_score": result["predicted_score"],
+                "category": category
             })
-        
-        # Calculate summary statistics
-        pred_scores = [p['predicted_score'] for p in predictions]
-        summary = {
-            'total_students': len(predictions),
-            'average_predicted_score': sum(pred_scores) / len(pred_scores),
-            'min_score': min(pred_scores),
-            'max_score': max(pred_scores),
-            'category_distribution': {
-                'Excellent': sum(1 for p in predictions if p['category'] == 'Excellent'),
-                'Good': sum(1 for p in predictions if p['category'] == 'Good'),
-                'Average': sum(1 for p in predictions if p['category'] == 'Average'),
-                'Poor': sum(1 for p in predictions if p['category'] == 'Poor')
+
+            if category in category_distribution:
+                category_distribution[category] += 1
+
+        return {
+            "predictions": predictions,
+            "summary": {
+                "total_students": len(predictions),
+                "category_distribution": category_distribution
             }
         }
-        
-        # Save batch prediction
-        batch_doc = {
-            'id': str(uuid.uuid4()),
-            'predictions': predictions,
-            'summary': summary,
-            'timestamp': datetime.now(timezone.utc).isoformat()
+
+    except Exception as e:
+        print("Batch prediction error:", e)
+
+        return {
+            "predictions": [],
+            "summary": {
+                "total_students": 0,
+                "category_distribution": {
+                    "Excellent": 0,
+                    "Good": 0,
+                    "Average": 0,
+                    "Poor": 0
+                }
+            }
         }
-        await db.batch_predictions.insert_one(batch_doc)
-        
-        return BatchPredictionResult(predictions=predictions, summary=summary)
-        
-    except pd.errors.EmptyDataError:
-        raise HTTPException(status_code=400, detail="CSV file is empty")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Batch prediction error: {str(e)}")
 
+
+# ==========================
+# ANALYTICS
+# ==========================
 @api_router.get("/model-info")
-async def get_model_info():
-    """Get model information and statistics"""
-    try:
-        stats = get_model_stats()
-        return stats
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching model info: {str(e)}")
+async def get_model_info(user: dict = Depends(require_role(["admin"]))):
+    stats = get_model_stats()
+    return stats
 
-@api_router.get("/predictions/history")
-async def get_prediction_history(limit: int = 50):
-    """Get recent prediction history"""
-    try:
-        predictions = await db.predictions.find({}, {"_id": 0}).sort("timestamp", -1).limit(limit).to_list(limit)
-        return {"predictions": predictions, "count": len(predictions)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching history: {str(e)}")
 
-# Include the router in the main app
+# ==========================
+# AI CHAT
+# ==========================
+@api_router.post("/ai-chat")
+async def ai_chat(
+    request: AIChatRequest,
+    user: dict = Depends(require_role(["student", "admin"]))
+):
+
+    try:
+
+        system_prompt = """
+You are an AI Study Mentor helping students improve performance.
+Give clear study advice and motivation.
+"""
+
+        response = client_ai.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": request.message},
+            ],
+            temperature=0.7,
+            max_tokens=500,
+        )
+
+        reply = response.choices[0].message.content
+
+        return {"reply": reply}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================
+# APP CONFIG
+# ==========================
 app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown_db():
     client.close()
