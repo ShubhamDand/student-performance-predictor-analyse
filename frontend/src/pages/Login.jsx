@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Lock, Mail, LogIn } from "lucide-react";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = "https://student-performance-predictor-analyse.onrender.com";
 const API = `${BACKEND_URL}/api`;
 
 const Login = () => {
