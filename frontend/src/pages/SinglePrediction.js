@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Calculator, Clock, Moon, Book, Award, Sliders, Lightbulb } from 'lucide-react';
 import { toast } from 'sonner';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = "https://student-performance-predictor-analyse.onrender.com";
 const API = `${BACKEND_URL}/api`;
 
 const SinglePrediction = () => {
