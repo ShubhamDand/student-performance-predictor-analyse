@@ -12,7 +12,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "http://127.0.0.1:8000";
+const BACKEND_URL = "https://student-performance-predictor-analyse.onrender.com";
 const API = `${BACKEND_URL}/api`;
 
 const COLORS = {
