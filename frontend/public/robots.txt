@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://student-performance-predictor-analyse-1.onrender.com/sitemap.xml
