@@ -327,7 +327,7 @@ Give clear study advice and motivation.
 """
 
         response = client_ai.chat.completions.create(
-            model="llama-3.1-8b-instant",
+    model="openai/gpt-oss-20b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.message},
