@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { MessageSquare, Send, X } from "lucide-react";
 
-const API_URL = "http://localhost:8000/api/ai-chat";
+const API_URL = "https://student-performance-predictor-analyse.onrender.com/api/ai-chat";
 
 const AIChatbot = () => {
   const [open, setOpen] = useState(false);
